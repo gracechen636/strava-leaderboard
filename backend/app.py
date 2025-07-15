@@ -1,5 +1,5 @@
-from flask import Flask, jsonify
-import pandas as pd
+from flask      import Flask, jsonify, request
+import pandas    as pd
 import os
 from dotenv import load_dotenv
 
@@ -9,10 +9,6 @@ app = Flask(__name__)
 load_dotenv()
 
 DATA_PATH = os.path.join(os.path.dirname(__file__), "../data/friends_data.csv")
-
-@app.route("/")
-def home():
-    return "🚀 Strava Leaderboard Backend is running!"
 
 @app.route("/leaderboard")
 def leaderboard():
