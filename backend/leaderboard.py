@@ -8,28 +8,35 @@ DATA_PATH = os.path.join(os.path.dirname(__file__), "../data/friends_data.csv")
 
 @app.route("/leaderboard")
 def leaderboard():
-    # 1) Read friends' pivot CSV, keep numeric columns only
+    # 1) Load the CSV
     df = pd.read_csv(DATA_PATH)
-    df = df.loc[:, df.dtypes != object]
 
-    # 2) Sum each friend
-    totals = df.sum(axis=0)
+    # 2) Drop any "LAST UPDATE" column by name (case‑insensitive)
+    drop_mask = df.columns.str.contains("LAST\s*UPDATE", case=False)
+    df = df.loc[:, ~drop_mask]
 
-    # 3) Fetch your Strava data & sum
-    start = request.args.get("start")
-    end   = request.args.get("end")
-    typ   = request.args.get("type")
+    # 3) Coerce all data to numbers, turning non-numeric into NaN
+    df = df.apply(pd.to_numeric, errors="coerce")
+
+    # 4) Sum each column (friends)
+    totals = df.sum(axis=0, skipna=True).to_dict()
+
+    # 5) Fetch & sum your Strava miles for May 1→Sep 1 2025 by default
+    start = request.args.get("start", "2025-05-01")
+    end   = request.args.get("end",   "2025-09-01")
+    typ   = request.args.get("type",  None)  # None => all activity types
     my_acts = get_my_strava_data(start, end, typ)
-    my_total = sum(a["distance"] for a in my_acts)
-    totals["Grace"] = my_total   # put you back in!
+    totals["Grace"] = sum(a["distance"] for a in my_acts)
 
-    # 4) Sort descending and return JSON
-    sorted_totals = totals.sort_values(ascending=False)
-    result = [
-        {"name": n, "total_distance": round(d, 2)}
-        for n, d in sorted_totals.items()
-    ]
-    return jsonify(result)
+    # 6) Sort in Python so we never mix dtypes in numpy
+    items = [(name, float(dist)) for name, dist in totals.items()]
+    items.sort(key=lambda x: x[1], reverse=True)
+
+    # 7) Return as JSON
+    return jsonify([
+        {"name": name, "total_distance": round(dist, 2)}
+        for name, dist in items
+    ])
 
 if __name__ == "__main__":
     app.run(debug=True)

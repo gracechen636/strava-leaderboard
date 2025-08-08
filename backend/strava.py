@@ -1,71 +1,70 @@
 import os
-from datetime import datetime
-from typing import List, Optional, Dict
-
 import requests
+from datetime import datetime
+from dotenv import load_dotenv
+# print("🔑 STRAVA_ACCESS_TOKEN =", os.getenv("STRAVA_ACCESS_TOKEN"))
+# print("🔑 STRAVA_REFRESH_TOKEN =", os.getenv("STRAVA_REFRESH_TOKEN"))
 
-BASE_URL = "https://www.strava.com/api/v3"
+# 1) Load environment variables from backend/.env
+load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
+CLIENT_ID       = os.getenv("STRAVA_CLIENT_ID")
+CLIENT_SECRET   = os.getenv("STRAVA_CLIENT_SECRET")
+ACCESS_TOKEN    = os.getenv("STRAVA_ACCESS_TOKEN")
+REFRESH_TOKEN   = os.getenv("STRAVA_REFRESH_TOKEN")
+BASE_URL        = "https://www.strava.com/api/v3"
 
-def _get_token(provided: Optional[str] = None) -> str:
-    token = provided or os.getenv("STRAVA_ACCESS_TOKEN")
-    if not token:
-        raise ValueError("STRAVA_ACCESS_TOKEN not provided")
-    return token
-
-
-def get_my_strava_data(start: Optional[datetime] = None,
-                       end: Optional[datetime] = None,
-                       activity_type: Optional[str] = None,
-                       access_token: Optional[str] = None) -> List[Dict]:
-    """Fetch activities from the authenticated athlete's Strava account.
-
-    Parameters
-    ----------
-    start : datetime, optional
-        Only include activities after this time.
-    end : datetime, optional
-        Only include activities before this time.
-    activity_type : str, optional
-        Filter by activity type (e.g. "Run", "Ride").
-    access_token : str, optional
-        OAuth access token. If omitted, STRAVA_ACCESS_TOKEN env var is used.
-
-    Returns
-    -------
-    List[Dict]
-        A list of activity dictionaries with name, type, distance (km) and date.
+def refresh_access_token():
     """
-    token = _get_token(access_token)
+    If your access token has expired, use the refresh token
+    to get a new access token from Strava.
+    """
+    resp = requests.post(
+        "https://www.strava.com/oauth/token",
+        data={
+            "client_id":     CLIENT_ID,
+            "client_secret": CLIENT_SECRET,
+            "grant_type":    "refresh_token",
+            "refresh_token": REFRESH_TOKEN,
+        },
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    # Update in-memory tokens so subsequent calls use the fresh one
+    os.environ["STRAVA_ACCESS_TOKEN"]  = data["access_token"]
+    os.environ["STRAVA_REFRESH_TOKEN"] = data["refresh_token"]
+    return data["access_token"]
+
+def get_my_strava_data(start: str, end: str, activity_type: str = None):
+    """
+    Fetch your Strava activities between `start` and `end` dates (YYYY-MM-DD),
+    optionally filtering by `activity_type` ("Run", "Ride", etc.). Returns
+    a list of dicts {"name":"Grace","distance":miles,"date":"YYYY-MM-DD"}.
+    """
+    # 2) Parse dates and convert to epoch seconds
+    after  = int(datetime.fromisoformat(start).timestamp())
+    before = int(datetime.fromisoformat(end).timestamp())
+
+    # 3) Attempt to fetch using current access token
+    token   = os.getenv("STRAVA_ACCESS_TOKEN")
     headers = {"Authorization": f"Bearer {token}"}
+    params  = {"after": after, "before": before, "per_page": 200}
 
-    params = {
-        "page": 1,
-        "per_page": 200,
-    }
-    if start:
-        params["after"] = int(start.timestamp())
-    if end:
-        params["before"] = int(end.timestamp())
+    resp = requests.get(f"{BASE_URL}/athlete/activities", headers=headers, params=params)
+    if resp.status_code == 401:
+        # Token expired: refresh and retry once
+        token = refresh_access_token()
+        headers["Authorization"] = f"Bearer {token}"
+        resp = requests.get(f"{BASE_URL}/athlete/activities", headers=headers, params=params)
+    resp.raise_for_status()
 
-    activities: List[Dict] = []
-    while True:
-        resp = requests.get(f"{BASE_URL}/athlete/activities",
-                            headers=headers,
-                            params=params)
-        resp.raise_for_status()
-        batch = resp.json()
-        if not batch:
-            break
-        for act in batch:
-            if activity_type and act.get("type", "").lower() != activity_type.lower():
-                continue
-            activities.append({
-                "name": act.get("name"),
-                "type": act.get("type"),
-                # distances are returned in meters
-                "distance": act.get("distance", 0.0) / 1000.0,
-                "date": act.get("start_date_local", "")[:10],
-            })
-        params["page"] += 1
-    return activities
+    # 4) Process the JSON payload
+    out = []
+    for a in resp.json():
+        t = a.get("type", "").lower()
+        if activity_type and t != activity_type.lower():
+            continue
+        miles = a.get("distance", 0.0) / 1609.34
+        date  = a.get("start_date_local", "").split("T")[0]
+        out.append({"name": "Grace", "distance": miles, "date": date})
+    return out
