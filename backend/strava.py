@@ -2,10 +2,8 @@ import os
 import requests
 from datetime import datetime
 from dotenv import load_dotenv
-# print("🔑 STRAVA_ACCESS_TOKEN =", os.getenv("STRAVA_ACCESS_TOKEN"))
-# print("🔑 STRAVA_REFRESH_TOKEN =", os.getenv("STRAVA_REFRESH_TOKEN"))
 
-# 1) Load environment variables from backend/.env
+# Load environment variables from .env file
 load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
 CLIENT_ID       = os.getenv("STRAVA_CLIENT_ID")
@@ -30,35 +28,30 @@ def refresh_access_token():
     )
     resp.raise_for_status()
     data = resp.json()
-    # Update in-memory tokens so subsequent calls use the fresh one
+    # Update in-memory tokens
     os.environ["STRAVA_ACCESS_TOKEN"]  = data["access_token"]
     os.environ["STRAVA_REFRESH_TOKEN"] = data["refresh_token"]
     return data["access_token"]
 
 def get_my_strava_data(start: str, end: str, activity_type: str = None):
     """
-    Fetch your Strava activities between `start` and `end` dates (YYYY-MM-DD),
-    optionally filtering by `activity_type` ("Run", "Ride", etc.). Returns
-    a list of dicts {"name":"Grace","distance":miles,"date":"YYYY-MM-DD"}.
+    Fetch Strava activities between `start` and `end` dates (YYYY-MM-DD),
+    optionally filtered by `activity_type`.
     """
-    # 2) Parse dates and convert to epoch seconds
     after  = int(datetime.fromisoformat(start).timestamp())
     before = int(datetime.fromisoformat(end).timestamp())
 
-    # 3) Attempt to fetch using current access token
     token   = os.getenv("STRAVA_ACCESS_TOKEN")
     headers = {"Authorization": f"Bearer {token}"}
     params  = {"after": after, "before": before, "per_page": 200}
 
     resp = requests.get(f"{BASE_URL}/athlete/activities", headers=headers, params=params)
     if resp.status_code == 401:
-        # Token expired: refresh and retry once
         token = refresh_access_token()
         headers["Authorization"] = f"Bearer {token}"
         resp = requests.get(f"{BASE_URL}/athlete/activities", headers=headers, params=params)
     resp.raise_for_status()
 
-    # 4) Process the JSON payload
     out = []
     for a in resp.json():
         t = a.get("type", "").lower()
